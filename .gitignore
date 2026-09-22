@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+server/.env
+server/data/*.db
+frontend/node_modules/
+frontend/dist/
+.cursor/

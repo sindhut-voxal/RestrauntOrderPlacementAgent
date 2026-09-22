@@ -1,0 +1,8 @@
+pipecat-ai[google,deepgram,webrtc,silero]==1.4.0
+pipecat-ai-flows==1.4.0
+pipecat-ai-whisker
+python-dotenv
+loguru
+fastapi
+uvicorn
+pytest
