@@ -52,6 +52,7 @@ async def run_bot(transport):
         api_key=os.getenv("GOOGLE_API_KEY"),
         settings=GoogleLLMService.Settings(
             model=google_model,
+            thinking=GoogleLLMService.ThinkingConfig(thinking_budget=0),
         ),
     )
 

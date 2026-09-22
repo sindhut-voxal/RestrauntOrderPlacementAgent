@@ -15,6 +15,7 @@ from ui_sync import push_order_from_state
 ROLE_MESSAGE = (
     "You are a friendly restaurant voice ordering assistant. "
     "Keep replies short and natural. Never invent menu items or prices. "
+    "Only name food that appeared in a tool result. "
     "Use tools for menu, cart, customer details, payment, and confirmation."
 )
 
@@ -23,12 +24,19 @@ async def _push(flow_manager: FlowManager):
     await push_order_from_state(flow_manager)
 
 
+def _fn(**kwargs) -> FlowsFunctionSchema:
+    kwargs.setdefault("cancel_on_interruption", True)
+    return FlowsFunctionSchema(**kwargs)
+
+
 def create_start_order_function():
     async def handler(args, flow_manager: FlowManager):
-        await flow_manager.set_node_from_config(create_take_order_node())
-        return {"success": True, "message": "Ready to take the customer's order."}
+        return (
+            {"success": True, "message": "Ready to take the customer's order."},
+            create_take_order_node(),
+        )
 
-    return FlowsFunctionSchema(
+    return _fn(
         name="start_order",
         description="Start taking the customer's food order.",
         properties={},
@@ -42,15 +50,24 @@ def create_review_function():
         order = flow_manager.state["order"]
         cart = get_cart(order)
         if not cart["items"]:
-            return {
-                "success": False,
-                "message": "The cart is empty. Add at least one item before reviewing.",
-            }
+            return (
+                {
+                    "success": False,
+                    "message": "The cart is empty. Add at least one item before reviewing.",
+                },
+                None,
+            )
 
-        await flow_manager.set_node_from_config(create_review_order_node())
-        return {"success": True, "message": "The order is ready to be reviewed.", "cart": cart}
+        return (
+            {
+                "success": True,
+                "message": "The order is ready to be reviewed.",
+                "cart": cart,
+            },
+            create_review_order_node(),
+        )
 
-    return FlowsFunctionSchema(
+    return _fn(
         name="review_order",
         description="Finish taking the order and review the customer's cart.",
         properties={},
@@ -61,10 +78,12 @@ def create_review_function():
 
 def create_change_order_function():
     async def handler(args, flow_manager: FlowManager):
-        await flow_manager.set_node_from_config(create_take_order_node())
-        return {"success": True, "message": "Ready to make changes to the order."}
+        return (
+            {"success": True, "message": "Ready to make changes to the order."},
+            create_take_order_node(),
+        )
 
-    return FlowsFunctionSchema(
+    return _fn(
         name="change_order",
         description="Go back so the customer can change cart items.",
         properties={},
@@ -78,15 +97,24 @@ def create_collect_details_function():
         order = flow_manager.state["order"]
         cart = get_cart(order)
         if not cart["items"]:
-            return {
-                "success": False,
-                "message": "The cart is empty. Add items before collecting details.",
-            }
+            return (
+                {
+                    "success": False,
+                    "message": "The cart is empty. Add items before collecting details.",
+                },
+                None,
+            )
 
-        await flow_manager.set_node_from_config(create_collect_details_node())
-        return {"success": True, "message": "Ready to collect pickup or delivery details."}
+        return (
+            {
+                "success": True,
+                "message": "Ready to collect pickup or delivery details.",
+                "cart": cart,
+            },
+            create_collect_details_node(),
+        )
 
-    return FlowsFunctionSchema(
+    return _fn(
         name="collect_details",
         description="Customer confirmed the cart. Collect name, phone, and pickup or delivery details.",
         properties={},
@@ -97,7 +125,7 @@ def create_collect_details_function():
 
 def _cart_functions():
     async def handle_search(args, flow_manager: FlowManager):
-        return {"results": search_menu(args["query"])}
+        return search_menu(args.get("query", ""))
 
     async def handle_add(args, flow_manager: FlowManager):
         result = add_to_cart(
@@ -130,19 +158,22 @@ def _cart_functions():
         return get_cart(flow_manager.state["order"])
 
     return [
-        FlowsFunctionSchema(
+        _fn(
             name="search_menu",
-            description="Search the food menu for matching items.",
+            description=(
+                "Search the food menu. Use this for specific items and also when the "
+                "customer asks what is available, the menu, food, or everything."
+            ),
             properties={
                 "query": {
                     "type": "string",
-                    "description": "Food item or keyword to search for.",
+                    "description": "Food item, keyword, or browse term such as menu or food.",
                 }
             },
             required=["query"],
             handler=handle_search,
         ),
-        FlowsFunctionSchema(
+        _fn(
             name="add_to_cart",
             description="Add a food item to the customer's cart.",
             properties={
@@ -158,7 +189,7 @@ def _cart_functions():
             required=["item_name", "quantity"],
             handler=handle_add,
         ),
-        FlowsFunctionSchema(
+        _fn(
             name="remove_from_cart",
             description="Remove an item or quantity from the cart.",
             properties={
@@ -174,7 +205,7 @@ def _cart_functions():
             required=["item_name"],
             handler=handle_remove,
         ),
-        FlowsFunctionSchema(
+        _fn(
             name="update_quantity",
             description="Set the quantity of an item already in the cart, or add it if missing.",
             properties={
@@ -190,7 +221,7 @@ def _cart_functions():
             required=["item_name", "quantity"],
             handler=handle_update,
         ),
-        FlowsFunctionSchema(
+        _fn(
             name="view_cart",
             description="View the customer's current cart.",
             properties={},
@@ -231,10 +262,11 @@ def create_take_order_node() -> NodeConfig:
             {
                 "role": "system",
                 "content": (
-                    "Take the customer's food order. Use search_menu if you are unsure "
-                    "an item exists. Ask for quantity if needed. After adding an item, "
-                    "acknowledge it and ask if they want anything else. "
-                    "When they are finished, use review_order. "
+                    "Take the customer's food order. Use search_menu for specific items "
+                    "and when they ask what you have. Only offer names and prices from "
+                    "the tool's results or available list. Never invent items such as tacos. "
+                    "Ask for quantity if needed. After adding an item, acknowledge it and "
+                    "ask if they want anything else. When they are finished, use review_order. "
                     "Do not collect address or payment yet."
                 ),
             }
@@ -257,16 +289,18 @@ def create_review_order_node() -> NodeConfig:
             {
                 "role": "system",
                 "content": (
-                    "First use view_cart. Read back each item, quantity, price, and total. "
+                    "The review_order tool result already includes the cart. "
+                    "Read back each item, quantity, price, and total from that result. "
+                    "Call view_cart only if the cart is missing. "
                     "Ask if everything is correct. If they want changes, use change_order. "
                     "If they confirm, use collect_details. Do not collect payment yet."
                 ),
             }
         ],
         "functions": [
-            FlowsFunctionSchema(
+            _fn(
                 name="view_cart",
-                description="View the customer's current cart.",
+                description="View the customer's current cart if it was not already provided.",
                 properties={},
                 required=[],
                 handler=handle_view,
@@ -288,8 +322,8 @@ def create_collect_details_node() -> NodeConfig:
         )
         await _push(flow_manager)
         if result.get("success"):
-            await flow_manager.set_node_from_config(create_mock_payment_node())
-        return result
+            return result, create_mock_payment_node()
+        return result, None
 
     return {
         "name": "collect_details",
@@ -305,7 +339,7 @@ def create_collect_details_node() -> NodeConfig:
             }
         ],
         "functions": [
-            FlowsFunctionSchema(
+            _fn(
                 name="set_customer_details",
                 description="Save name, phone, and pickup or delivery details.",
                 properties={
@@ -334,15 +368,13 @@ def create_mock_payment_node() -> NodeConfig:
         result = charge_mock_payment(flow_manager.state["order"])
         await _push(flow_manager)
         if not result.get("success"):
-            return result
+            return result, None
 
         confirmed = confirm_order(flow_manager.state["order"])
         await _push(flow_manager)
         if confirmed.get("success"):
-            await flow_manager.set_node_from_config(
-                create_confirmed_node(flow_manager.state["order"])
-            )
-        return confirmed
+            return confirmed, create_confirmed_node(flow_manager.state["order"])
+        return confirmed, None
 
     return {
         "name": "mock_payment",
@@ -351,13 +383,14 @@ def create_mock_payment_node() -> NodeConfig:
             {
                 "role": "system",
                 "content": (
-                    "Tell the customer the total and that you will place a mock payment. "
+                    "Tell the customer the total from the cart already in context "
+                    "and that you will place a mock payment. "
                     "When they agree, call charge_mock_payment. This is not a real card charge."
                 ),
             }
         ],
         "functions": [
-            FlowsFunctionSchema(
+            _fn(
                 name="charge_mock_payment",
                 description="Charge a mock payment for the current cart total and confirm the order.",
                 properties={},

@@ -11,17 +11,30 @@ from tools import (
 )
 
 
-def test_search_empty_query_returns_nothing():
-    assert search_menu("") == []
-    assert search_menu("   ") == []
+def test_search_browse_returns_full_menu():
+    for query in ("", "food", "all", "menu", "what do you have"):
+        payload = search_menu(query)
+        names = {item["name"] for item in payload["results"]}
+        assert names == {"veg burger", "french fries", "coke", "pizza"}
+
+
+def test_search_unknown_includes_available():
+    payload = search_menu("tacos")
+    assert payload["results"] == []
+    assert {item["name"] for item in payload["available"]} == {
+        "veg burger",
+        "french fries",
+        "coke",
+        "pizza",
+    }
 
 
 def test_search_aliases_and_fuzzy():
-    fries = search_menu("fries")
+    fries = search_menu("fries")["results"]
     assert fries and fries[0]["name"] == "french fries"
-    cola = search_menu("cola")
+    cola = search_menu("cola")["results"]
     assert cola and cola[0]["name"] == "coke"
-    burger = search_menu("veggie burger")
+    burger = search_menu("veggie burger")["results"]
     assert burger and burger[0]["name"] == "veg burger"
 
 

@@ -48,6 +48,57 @@ function botEndpoint(): string {
   return `${window.location.origin}/api/offer`;
 }
 
+function formatError(message: unknown): string {
+  if (typeof message === "string") {
+    return message;
+  }
+  if (message instanceof Error) {
+    return message.message;
+  }
+  if (message && typeof message === "object") {
+    const data = (message as { data?: unknown }).data;
+    if (typeof data === "string") {
+      return data;
+    }
+    if (data && typeof data === "object") {
+      const nested = data as { error?: unknown; message?: unknown };
+      if (typeof nested.error === "string") {
+        return nested.error;
+      }
+      if (typeof nested.message === "string") {
+        return nested.message;
+      }
+    }
+    const top = message as { message?: unknown; error?: unknown };
+    if (typeof top.message === "string") {
+      return top.message;
+    }
+    if (typeof top.error === "string") {
+      return top.error;
+    }
+    try {
+      return JSON.stringify(message);
+    } catch {
+      return "Something went wrong";
+    }
+  }
+  return "Something went wrong";
+}
+
+function asOrderUpdate(payload: unknown): OrderUpdate | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (record.event === "order_update" || record.cart || record.status) {
+    return record as OrderUpdate;
+  }
+  if (record.data && typeof record.data === "object") {
+    return asOrderUpdate(record.data);
+  }
+  return null;
+}
+
 function statusLabel(status?: string): string {
   switch (status) {
     case "awaiting_payment":
@@ -72,17 +123,21 @@ export default function App() {
 
   const connected = ["connected", "ready"].includes(transportState);
 
-  const applyOrderUpdate = useCallback((payload: OrderUpdate) => {
-    if (payload?.event && payload.event !== "order_update") {
+  const applyOrderUpdate = useCallback((payload: unknown) => {
+    const next = asOrderUpdate(payload);
+    if (!next) {
+      return;
+    }
+    if (next.event && next.event !== "order_update") {
       return;
     }
     setOrder((prev) => ({
-      cart: payload.cart ?? prev.cart,
-      total: payload.total ?? prev.total,
-      status: payload.status ?? prev.status,
-      customer: payload.customer ?? prev.customer,
-      order_id: payload.order_id ?? prev.order_id,
-      payment: payload.payment ?? prev.payment,
+      cart: next.cart ?? prev.cart,
+      total: next.total ?? prev.total,
+      status: next.status ?? prev.status,
+      customer: next.customer ?? prev.customer,
+      order_id: next.order_id ?? prev.order_id,
+      payment: next.payment ?? prev.payment,
     }));
   }, []);
 
@@ -96,17 +151,23 @@ export default function App() {
       callbacks: {
         onTransportStateChanged: (state) => setTransportState(state),
         onDisconnected: () => setTransportState("disconnected"),
-        onError: (message) => setError(String(message)),
-        onServerMessage: (data) => applyOrderUpdate(data as OrderUpdate),
+        onError: (message) => setError(formatError(message)),
+        onServerMessage: (data) => applyOrderUpdate(data),
         onUserTranscript: (data) => {
           if (data.text) {
             setUserSpeech(data.text);
           }
         },
+        onBotStartedSpeaking: () => setBotSpeech(""),
+        onBotTtsStarted: () => setBotSpeech(""),
         onBotOutput: (data) => {
-          const text = (data as { text?: string }).text;
-          if (text) {
-            setBotSpeech(text);
+          if (data.text) {
+            setBotSpeech(data.text);
+          }
+        },
+        onBotTtsText: (data) => {
+          if (data.text) {
+            setBotSpeech((prev) => prev + data.text);
           }
         },
       },
@@ -117,12 +178,19 @@ export default function App() {
     void client.initDevices();
 
     const onServerMessage = (data: unknown) => {
-      applyOrderUpdate(data as OrderUpdate);
+      applyOrderUpdate(data);
+    };
+    const onBotTtsText = (data: { text?: string }) => {
+      if (data.text) {
+        setBotSpeech((prev) => prev + data.text);
+      }
     };
     client.on(RTVIEvent.ServerMessage, onServerMessage);
+    client.on(RTVIEvent.BotTtsText, onBotTtsText);
 
     return () => {
       client.off(RTVIEvent.ServerMessage, onServerMessage);
+      client.off(RTVIEvent.BotTtsText, onBotTtsText);
       void client.disconnect();
       clientRef.current = null;
       setClient(null);

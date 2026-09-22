@@ -75,10 +75,36 @@ def resolve_menu_item(query: str) -> Optional[str]:
     return MENU_ALIASES.get(match, match)
 
 
+def _all_menu_items():
+    return [_menu_item_dict(name) for name in MENU]
+
+
+BROWSE_QUERIES = {
+    "",
+    "food",
+    "menu",
+    "all",
+    "everything",
+    "items",
+    "eat",
+    "options",
+    "dishes",
+}
+
+BROWSE_PHRASES = (
+    "what do you have",
+    "what's on the menu",
+    "whats on the menu",
+    "what is on the menu",
+)
+
+
 def search_menu(query: str):
     query = (query or "").lower().strip()
-    if not query:
-        return []
+    available = _all_menu_items()
+
+    if query in BROWSE_QUERIES or any(phrase in query for phrase in BROWSE_PHRASES):
+        return {"results": available, "available": available}
 
     resolved = resolve_menu_item(query)
     results = []
@@ -95,7 +121,14 @@ def search_menu(query: str):
             results.append(_menu_item_dict(name))
             seen.add(name)
 
-    return results
+    if not results:
+        return {
+            "results": [],
+            "available": available,
+            "message": "No exact match. Offer only items from available.",
+        }
+
+    return {"results": results}
 
 
 def add_to_cart(order: Order, item_name: str, quantity: int):
